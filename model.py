@@ -2,17 +2,19 @@ import pytorch_lightning as pl
 from transformers import T5ForConditionalGeneration, T5Tokenizer
 from undecorated import undecorated
 from types import MethodType
+import torch
 
 
 class T5DataGenerator(pl.LightningModule):
     def __init__(self, args):
         super().__init__()
-        print(args)
         self.args = args
         self.model = T5ForConditionalGeneration.from_pretrained(
             self.args['model_name'])
         self.tokenizer = T5Tokenizer.from_pretrained(
             self.args['tokenizer_name'])
+
+        self.loss = torch.nn.CrossEntropyLoss()
 
         # allow grad in generate
         generate_with_grad = undecorated(self.model.generate)
@@ -21,7 +23,7 @@ class T5DataGenerator(pl.LightningModule):
 
     # have the model generate multiple unique candidate outputs for a given input
 
-    def forward(self, input_ids, attention_mask, num_return_sequences):
+    def forward(self, input_ids, attention_mask):
         return self.model.generate_with_grad(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -37,15 +39,33 @@ class T5DataGenerator(pl.LightningModule):
     # the labels are all of the potential outputs the model could generate for a given intent
     # model out shape (bs * num_return_sequences, max_seq_len)
     def training_step(self, batch, batch_idx):
-        input_ids, attention_mask, labels = batch
-        outputs = self(input_ids=input_ids, attention_mask=attention_mask,
-                       num_return_sequences=self.args['num_return_sequences'])
+        input_ids, attention_mask, all_but_example = batch
+        outputs = self(input_ids=input_ids, attention_mask=attention_mask)
         # for each output sequence, calculate the least loss relative to all of teh examples in labels
+        outputs = outputs.view(
+            len(input_ids), self.args['num_return_sequences'], -1)
+
+        loss = torch.sum([torch.min([self.loss(gen, data)
+                         for xs in outputs for gen in xs]) for data in all_but_example])
 
         self.log('train_loss', loss)
-
-        loss = outputs[0]
         return loss
+
+    def validation_step(self, batch, batch_idx):
+        input_ids, attention_mask, all_but_example = batch
+        outputs = self(input_ids=input_ids, attention_mask=attention_mask)
+        # for each output sequence, calculate the least loss relative to all of teh examples in labels
+        outputs = outputs.view(
+            len(input_ids), self.args['num_return_sequences'], -1)
+
+        loss = torch.sum([torch.min([self.loss(gen, data)
+                         for xs in outputs for gen in xs]) for data in all_but_example])
+
+        self.log('validation_loss', loss)
+        return loss
+
+    def configure_optimizers(self):
+        return torch.optim.Adam(self.parameters(), lr=1e-4)
 
 
 args = {
