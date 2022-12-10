@@ -49,6 +49,13 @@ def get_data_per_intent():
     return data_per_intent
 
 
+def get_min_num_of_examples_per_intent():
+    data_per_intent = get_data_per_intent()
+    min_num_of_examples_per_intent = min(
+        [len(data_per_intent[intent]) for intent in data_per_intent])
+    return min_num_of_examples_per_intent
+
+
 class T5GenerationFineTune(Dataset):
     def __init__(self, dataset, intent_slots, tokenizer, data_per_intent, max_length=512):
         self.dataset = dataset
